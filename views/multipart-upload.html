@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>S3 Multipart Upload Test</title>
+</head>
+<body>
+  <h1>S3 Multipart Upload Test - <span style="color: blue;">Fetch Multi Part</span></h1>
+  <input type="file" id="file-input" />
+  <button id="upload-button">Upload File</button>
+  <p>Upload Progress: <span id="progress">0%</span></p>
+  <p>Time Elapsed: <span id="time-elapsed">0 seconds</span></p>
+
+  <script>
+    
+    const base_url= "/s3";
+    const bucket= "test-bucket-1118899";
+
+    document.getElementById('upload-button').addEventListener('click', async () => {
+      const fileInput = document.getElementById('file-input');
+      const file = fileInput.files[0];
+      
+      if (!file) {
+        alert('Please select a file to upload.');
+        return;
+      }
+
+      const startTime = new Date().getTime();
+      let uploadId, parts = [];
+      
+     //[1] Split the file into chunks (e.g., 5MB each)
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per chunk
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      // alert(totalChunks);
+
+      try {
+        //[2]: Request an upload ID from the Backend
+        const initiateResponse = await fetch(`${base_url}/multipart/initiate?bucket=${bucket}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        const { uploadId, fileName } = await initiateResponse.json();
+        console.log(uploadId, fileName);
+        //[3] Request presigned URLs for each chunk to upload (looping)
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+          // Generate signed URL for the chunk
+          const signedUrlResponse = await fetch(`${base_url}/multipart/signed-url?bucket=${bucket}&fileName=${fileName}&uploadId=${uploadId}&partNumber=${i + 1}`);
+          console.log("IIIIIIIIIIIII");
+          console.log(signedUrlResponse);
+          const  signedUrl  = await signedUrlResponse.text();
+          // Upload the chunk
+          console.log(signedUrl);
+          console.log(chunk);
+          const uploadResponse = await fetch(signedUrl, {
+            method: 'PUT',
+            body: chunk,
+            headers: {
+              'Content-Type': 'application/octet-stream',
+            },
+          });
+
+          if (!uploadResponse.ok) {
+            throw new Error(`Failed to upload chunk ${i + 1}`);
+          }
+
+          // Store the part information
+          const etag = uploadResponse.headers.get('ETag');
+          parts.push({ part: i + 1, etag: etag.replace(/"/g, '') });
+          //parts.push({ PartNumber: i + 1, ETag: etag.replace(/"/g, '') });
+          
+          // Update progress
+          const progress = ((i + 1) / totalChunks) * 100;
+          document.getElementById('progress').textContent = `${progress.toFixed(2)}%`;
+
+          const currentTime = new Date().getTime();
+          const timeElapsed = (currentTime - startTime) / 1000; // Convert to seconds
+          document.getElementById('time-elapsed').textContent = `${timeElapsed.toFixed(2)} seconds`;
+        }
+        //end of for...loop
+        //[4]: Complete Multipart Upload
+        await fetch(`${base_url}/multipart/complete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ fileName: fileName, bucket, uploadId, parts }),
+        });
+
+        alert('File uploaded successfully!');
+      } catch (error) {
+        alert(`Error uploading file: ${error.message}`);
+        console.error('Error uploading file:', error);
+      }
+    });
+  </script>
+</body>
+</html>
